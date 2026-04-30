@@ -1,64 +1,17 @@
 """
-Tool Functions 래퍼 — 기존 더미 함수를 챗봇용 Tool로 래핑합니다.
-실제 DB 연결 시 각 함수의 내부 구현만 교체하면 됩니다.
+Tool Functions 래퍼 — ToolExecutor 클래스가 SQLite Repository를 통해 실제 DB에 접근합니다.
 """
 
-import json
 import logging
 
 logger = logging.getLogger(__name__)
 
-# ── 더미 데이터 함수 (실제 DB 연결 시 교체) ────────────
-def _get_lunch_recommendations(top_n: int = 5, category: str | None = None, max_distance: int | None = None) -> dict:
-    restaurants = [
-        {"name": "명동칼국수", "score": 82, "distance": 320, "category": "한식", "kcal": 550, "protein": 20},
-        {"name": "서브웨이",   "score": 78, "distance": 180, "category": "양식", "kcal": 380, "protein": 28},
-        {"name": "한솥도시락", "score": 75, "distance": 120, "category": "한식", "kcal": 620, "protein": 18},
-        {"name": "스시로",     "score": 71, "distance": 450, "category": "일식", "kcal": 480, "protein": 22},
-        {"name": "본죽",       "score": 68, "distance": 160, "category": "한식", "kcal": 320, "protein": 12},
-    ]
-    if category:
-        restaurants = [r for r in restaurants if r["category"] == category]
-    if max_distance:
-        restaurants = [r for r in restaurants if r["distance"] <= max_distance]
-    return {"recommendations": restaurants[:top_n], "total": len(restaurants)}
-
-def _get_current_weather() -> dict:
-    return {"temp": 12, "sky": "흐림", "pop": 60, "dust_grade": "보통", "outdoor_comfort": "우산 챙기세요"}
-
-def _get_nutrition_diagnosis(user_id: str) -> dict:
-    return {"user_id": user_id, "recorded_days": 3, "avg_protein": 18,
-            "overall_status": "단백질 부족", "overall_score": 65,
-            "recommendations": ["단백질 섭취 늘리기", "나트륨 줄이기"]}
-
-def _get_restaurant_info(restaurant_name: str) -> dict:
-    db = {
-        "명동칼국수": {"kcal": 550, "protein": 20, "carbs": 78, "sodium": 1200, "distance": 320, "rating": 4.2},
-        "서브웨이":   {"kcal": 480, "protein": 28, "carbs": 52, "sodium": 900,  "distance": 180, "rating": 4.0},
-        "한솥도시락": {"kcal": 620, "protein": 18, "carbs": 85, "sodium": 1400, "distance": 120, "rating": 3.8},
-    }
-    info = db.get(restaurant_name, {})
-    if not info:
-        return {"error": f"{restaurant_name} 정보를 찾을 수 없습니다"}
-    return {"name": restaurant_name, **info}
-
-def _cast_vote(user_id: str, restaurant_name: str) -> dict:
-    return {"status": "success", "message": f"✅ {restaurant_name}에 투표 완료!", "user_id": user_id, "restaurant": restaurant_name}
-
-def _get_vote_status(team_id: str) -> dict:
-    return {"team_id": team_id, "team_members": 5, "voted_count": 2,
-            "tally": [{"restaurant_name": "한솥도시락", "votes": 2}, {"restaurant_name": "서브웨이", "votes": 1}]}
-
-def _record_meal(user_id: str, restaurant_name: str, satisfaction: int | None = None) -> dict:
-    return {"status": "success", "message": f"✅ 식사 기록 완료 ({restaurant_name})", "satisfaction": satisfaction}
-
-def _get_visit_history(team_id: str, days: int = 7) -> dict:
-    return {"team_id": team_id, "days": days,
-            "history": [
-                {"date": "2026-04-25", "restaurant": "서브웨이",   "votes": 3},
-                {"date": "2026-04-24", "restaurant": "명동칼국수", "votes": 4},
-                {"date": "2026-04-23", "restaurant": "한솥도시락", "votes": 5},
-            ]}
+from data.repositories.factory import (
+    get_restaurant_repo,
+    get_team_repo,
+    get_nutrition_repo,
+    get_weather_repo,
+)
 
 
 # ── Tool 정의 목록 ────────────────────────────────────
@@ -146,18 +99,6 @@ TOOL_DEFINITIONS: list[dict] = [
     },
 ]
 
-# 함수 라우팅 맵
-_TOOL_MAP = {
-    "get_lunch_recommendations": _get_lunch_recommendations,
-    "get_current_weather":       _get_current_weather,
-    "get_nutrition_diagnosis":   _get_nutrition_diagnosis,
-    "get_restaurant_info":       _get_restaurant_info,
-    "cast_vote":                 _cast_vote,
-    "get_vote_status":           _get_vote_status,
-    "record_meal":               _record_meal,
-    "get_visit_history":         _get_visit_history,
-}
-
 
 class ToolExecutor:
     """Tool 함수를 실행하고 LLM 친화적 형식으로 결과를 반환합니다."""
@@ -165,10 +106,125 @@ class ToolExecutor:
     def __init__(self, user_id: str = "user_001", team_id: str = "team_alpha"):
         self._user_id = user_id
         self._team_id = team_id
+        self._restaurant_repo = get_restaurant_repo()
+        self._team_repo = get_team_repo()
+        self._nutrition_repo = get_nutrition_repo()
+        self._weather_repo = get_weather_repo()
+
+    # ── 내부 Tool 메서드들 ────────────────────────────
+
+    def _get_lunch_recommendations(self, top_n=5, category=None, max_distance=None):
+        recs = self._restaurant_repo.get_nearby(
+            lat=37.4979, lng=127.0276, radius=max_distance or 1000, category=category
+        )
+        return {"recommendations": recs[:top_n], "total": len(recs)}
+
+    def _get_current_weather(self):
+        w = self._weather_repo.get_latest_cached() or {}
+        return {
+            "condition": w.get("condition", "unknown"),
+            "temp": w.get("temperature", "?"),
+            "humidity": w.get("humidity", "?"),
+            "description": w.get("description", ""),
+        }
+
+    def _get_nutrition_diagnosis(self, user_id=None):
+        uid = user_id or self._user_id
+        history = self._nutrition_repo.get_meal_history(user_id=uid, days=7)
+        if not history:
+            return {
+                "user_id": uid,
+                "recorded_days": 0,
+                "overall_status": "기록 없음",
+                "overall_score": 0,
+                "recommendations": [],
+            }
+        avg_sat = sum(h.get("satisfaction", 0) or 0 for h in history) / len(history)
+        return {
+            "user_id": uid,
+            "recorded_days": len(history),
+            "overall_status": f"평균 만족도 {avg_sat:.1f}/5.0",
+            "overall_score": int(avg_sat * 20),
+            "recommendations": [],
+        }
+
+    def _get_restaurant_info(self, restaurant_name):
+        results = self._restaurant_repo.search(restaurant_name)
+        if not results:
+            return {"error": f"{restaurant_name} 정보를 찾을 수 없습니다"}
+        r = results[0]
+        return {
+            "name": r["name"],
+            "category": r.get("category"),
+            "address": r.get("address"),
+            "rating": r.get("rating"),
+            "review_count": r.get("review_count"),
+            "open_time": r.get("open_time"),
+            "close_time": r.get("close_time"),
+        }
+
+    def _cast_vote(self, user_id=None, restaurant_name=None):
+        uid = user_id or self._user_id
+        candidates = self._restaurant_repo.search(restaurant_name or "")
+        if not candidates:
+            return {"status": "error", "message": f"'{restaurant_name}' 식당을 찾을 수 없습니다"}
+        rid = candidates[0]["place_id"]
+        name = candidates[0]["name"]
+        try:
+            self._team_repo.cast_vote(user_id=uid, team_id=self._team_id, restaurant_id=rid)
+            return {
+                "status": "success",
+                "message": f"✅ {name}에 투표 완료!",
+                "user_id": uid,
+                "restaurant": name,
+            }
+        except Exception as e:
+            return {"status": "error", "message": f"투표 실패: {e}"}
+
+    def _get_vote_status(self, team_id=None):
+        from datetime import date
+        tid = team_id or self._team_id
+        votes = self._team_repo.get_vote_results(team_id=tid, target_date=date.today())
+        tally = [{"restaurant_name": v["name"], "votes": v["vote_count"]} for v in votes]
+        return {"team_id": tid, "team_members": 5, "voted_count": len(votes), "tally": tally}
+
+    def _record_meal(self, user_id=None, restaurant_name=None, satisfaction=None):
+        uid = user_id or self._user_id
+        candidates = self._restaurant_repo.search(restaurant_name or "")
+        rid = candidates[0]["place_id"] if candidates else None
+        try:
+            self._nutrition_repo.record_meal(
+                user_id=uid,
+                restaurant_id=rid,
+                meal_name=restaurant_name or "",
+                satisfaction=satisfaction or 3,
+            )
+            return {
+                "status": "success",
+                "message": f"✅ 식사 기록 완료 ({restaurant_name})",
+                "satisfaction": satisfaction,
+            }
+        except Exception as e:
+            return {"status": "error", "message": f"기록 실패: {e}"}
+
+    def _get_visit_history(self, team_id=None, days=7):
+        tid = team_id or self._team_id
+        history = self._team_repo.get_visit_history(team_id=tid, days=days)
+        formatted = [
+            {
+                "date": h["visited_at"],
+                "restaurant": h.get("restaurant_id", "?"),
+                "votes": h.get("headcount", 0),
+            }
+            for h in history
+        ]
+        return {"team_id": tid, "days": days, "history": formatted}
+
+    # ── execute / format ──────────────────────────────
 
     def execute(self, tool_name: str, arguments: dict) -> dict:
         """
-        tool_name에 해당하는 함수를 실행합니다.
+        tool_name에 해당하는 메서드를 실행합니다.
 
         Args:
             tool_name: TOOL_DEFINITIONS에 정의된 함수 이름
@@ -177,7 +233,8 @@ class ToolExecutor:
         Returns:
             LLM이 이해할 수 있는 평문 형식의 결과 dict
         """
-        fn = _TOOL_MAP.get(tool_name)
+        method_name = f"_{tool_name}"
+        fn = getattr(self, method_name, None)
         if fn is None:
             logger.warning("알 수 없는 Tool: %s", tool_name)
             return {"error": f"알 수 없는 함수: {tool_name}"}
@@ -205,23 +262,30 @@ class ToolExecutor:
 
         if tool_name == "get_lunch_recommendations":
             recs = raw.get("recommendations", [])
-            formatted = [
-                f"{i+1}. {r['name']} ({r['distance']}m, {r['score']}점, {r['kcal']}kcal)"
-                for i, r in enumerate(recs)
-            ]
+            formatted = []
+            for i, r in enumerate(recs):
+                name = r.get("name", "?")
+                dist = r.get("distance", r.get("distance_m", "?"))
+                score = r.get("score", r.get("rating", "?"))
+                kcal = r.get("kcal", r.get("calories", "?"))
+                formatted.append(f"{i+1}. {name} ({dist}m, {score}점, {kcal}kcal)")
             return {"result": "점심 추천 목록", "items": formatted, "total": raw.get("total", 0)}
 
         if tool_name == "get_current_weather":
+            condition = raw.get("condition", raw.get("sky", "?"))
+            temp = raw.get("temp", raw.get("temperature", "?"))
+            humidity = raw.get("humidity", raw.get("pop", "?"))
+            description = raw.get("description", raw.get("outdoor_comfort", ""))
             return {
-                "result": f"{raw['sky']} {raw['temp']}°C, 강수확률 {raw['pop']}%, 미세먼지 {raw['dust_grade']}",
-                "tip": raw.get("outdoor_comfort", ""),
+                "result": f"{condition} {temp}°C, 습도 {humidity}%, {description}",
+                "tip": description,
             }
 
         if tool_name == "get_nutrition_diagnosis":
             return {
                 "result": raw["overall_status"],
                 "score": raw["overall_score"],
-                "avg_protein_g": raw["avg_protein"],
+                "recorded_days": raw.get("recorded_days", 0),
                 "advice": raw.get("recommendations", []),
             }
 
