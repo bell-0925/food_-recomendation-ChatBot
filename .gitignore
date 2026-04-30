@@ -1,0 +1,68 @@
+# ── Python ────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ── 가상환경 ──────────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ── 환경변수 (API 키 포함) ─────────────────────────────
+env.env
+.env
+*.env
+!.env.example
+
+# ── 데이터베이스 ──────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+
+# ── 테스트/커버리지 ───────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+coverage.xml
+*.cover
+
+# ── IDE / 에디터 ──────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Node / React ──────────────────────────────────────
+ui/react-chat/node_modules/
+ui/react-chat/dist/
+ui/react-chat/.env
+ui/react-chat/.env.local
+ui/react-chat/.env.*.local
+
+# ── 로그 ─────────────────────────────────────────────
+*.log
+logs/
+
+# ── 임시 파일 ─────────────────────────────────────────
+_trash/
+*.tmp
+*.bak
+.cache/
+
+# ── Jupyter ───────────────────────────────────────────
+.ipynb_checkpoints/
