@@ -1,8 +1,13 @@
 """
 가상 Seed 데이터 생성.
-`python data/seed/seed_data.py` 또는 run_seed() 함수로 실행.
+`python -m data.seed.seed_data` 또는 run_seed() 함수로 실행.
 중복 실행 시 기존 데이터를 삭제하고 재삽입한다.
 """
+import sys
+import os
+# 직접 실행 시 프로젝트 루트를 경로에 추가
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 import uuid
 from datetime import datetime, date, timedelta, timezone
 from data.database import SessionLocal, init_db
