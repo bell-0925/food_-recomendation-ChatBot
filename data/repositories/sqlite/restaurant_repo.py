@@ -15,7 +15,7 @@ class SQLiteRestaurantRepo(BaseRestaurantRepo):
                 if r.lat is None or r.lng is None:
                     continue
                 dlat = abs(r.lat - lat) * 111000
-                dlng = abs(r.lng - lng) * 88000
+                dlng = abs(r.lng - lng) * 88000  # ~37°N 기준 경도 1도 ≈ 88km
                 if (dlat ** 2 + dlng ** 2) ** 0.5 <= radius:
                     result.append(self._to_dict(r))
             return result
@@ -29,6 +29,7 @@ class SQLiteRestaurantRepo(BaseRestaurantRepo):
         with SessionLocal() as db:
             rows = db.query(Restaurant).filter(
                 Restaurant.name.contains(keyword)
+                | Restaurant.address.contains(keyword)
             ).all()
             return [self._to_dict(r) for r in rows]
 

@@ -37,10 +37,14 @@ class SQLiteNutritionRepo(BaseNutritionRepo):
             satisfaction=satisfaction,
         )
         with SessionLocal() as db:
-            db.add(record)
-            db.commit()
-            db.refresh(record)
-            return self._to_dict(record)
+            try:
+                db.add(record)
+                db.commit()
+                db.refresh(record)
+                return self._to_dict(record)
+            except Exception:
+                db.rollback()
+                raise
 
     @staticmethod
     def _to_dict(r: MealHistory) -> dict:

@@ -41,26 +41,30 @@ class SQLiteTeamRepo(BaseTeamRepo):
     def cast_vote(self, user_id, team_id, restaurant_id):
         today = date.today()
         with SessionLocal() as db:
-            session = db.query(VoteSession).filter(
-                VoteSession.team_id == team_id,
-                VoteSession.date == today,
-                VoteSession.status == "open",
-            ).first()
-            if not session:
-                session = VoteSession(
-                    session_id=str(uuid.uuid4()),
-                    team_id=team_id, date=today, status="open",
+            try:
+                session = db.query(VoteSession).filter(
+                    VoteSession.team_id == team_id,
+                    VoteSession.date == today,
+                    VoteSession.status == "open",
+                ).first()
+                if not session:
+                    session = VoteSession(
+                        session_id=str(uuid.uuid4()),
+                        team_id=team_id, date=today, status="open",
+                    )
+                    db.add(session)
+                    db.flush()
+                vote = Vote(
+                    session_id=session.session_id,
+                    user_id=user_id, restaurant_id=restaurant_id,
                 )
-                db.add(session)
-                db.flush()
-            vote = Vote(
-                session_id=session.session_id,
-                user_id=user_id, restaurant_id=restaurant_id,
-            )
-            db.add(vote)
-            db.commit()
-            return {"result": "투표 완료", "restaurant_id": restaurant_id,
-                    "session_id": session.session_id}
+                db.add(vote)
+                db.commit()
+                return {"result": "투표 완료", "restaurant_id": restaurant_id,
+                        "session_id": session.session_id}
+            except Exception:
+                db.rollback()
+                raise
 
     def get_visit_history(self, team_id, days=30):
         since = date.today() - timedelta(days=days)

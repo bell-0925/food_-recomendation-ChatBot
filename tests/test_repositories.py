@@ -52,7 +52,6 @@ def setup_db():
     yield
     from data.database import Base, engine
     Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
 
 
 @pytest.fixture
