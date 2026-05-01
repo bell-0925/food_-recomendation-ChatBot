@@ -5,6 +5,7 @@ LLM에 전달할 컨텍스트 문자열을 조립합니다.
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -34,6 +35,8 @@ class ContextBuilder:
         self._weather_repo = get_weather_repo()
         self._nutrition_repo = get_nutrition_repo()
         self._team_repo = get_team_repo()
+        # 스레드 풀을 미리 생성해두어 요청마다 생성/소멸 비용을 제거
+        self._pool = ThreadPoolExecutor(max_workers=4)
 
     # ── 공개 메서드 ───────────────────────────────────
 
@@ -96,22 +99,29 @@ class ContextBuilder:
     # ── 내부 빌더 ─────────────────────────────────────
 
     def _build_recommend_context(self, user_id: str, team_id: str, entities: dict) -> str:
-        # 날씨: repo에서 가져오기
-        weather_data = self._weather_repo.get_latest_cached() or {}
-        condition = weather_data.get("condition", "unknown")
-        temp = weather_data.get("temperature", "?")
-        humidity = weather_data.get("humidity", "?")
-
-        # 식사 기록: repo에서 가져오기
-        meal_history = self._nutrition_repo.get_meal_history(user_id=user_id, days=7)
-
-        # 추천 식당: repo에서 가져오기 (반경 1km)
-        category = entities.get("category")
-        recs = self._restaurant_repo.get_nearby(lat=37.4979, lng=127.0276, radius=1000, category=category)[:5]
-
-        # 투표 현황
         from datetime import date
-        votes = self._team_repo.get_vote_results(team_id=team_id, target_date=date.today())
+
+        category = entities.get("category")
+        today = date.today()
+
+        # 4개의 독립적인 DB 쿼리를 미리 생성된 스레드 풀에서 병렬 실행
+        f_weather = self._pool.submit(self._weather_repo.get_latest_cached)
+        f_history = self._pool.submit(self._nutrition_repo.get_meal_history, user_id, 7)
+        f_recs    = self._pool.submit(
+            lambda: self._restaurant_repo.get_nearby(
+                lat=37.4979, lng=127.0276, radius=1000, category=category
+            )[:5]
+        )
+        f_votes   = self._pool.submit(self._team_repo.get_vote_results, team_id, today)
+
+        weather_data = f_weather.result() or {}
+        meal_history = f_history.result()
+        recs         = f_recs.result()
+        votes        = f_votes.result()
+
+        condition    = weather_data.get("condition", "unknown")
+        temp         = weather_data.get("temperature", "?")
+        humidity     = weather_data.get("humidity", "?")
         vote_summary = f"{len(votes)}개 식당 투표 중" if votes else "투표 없음"
 
         lines = [

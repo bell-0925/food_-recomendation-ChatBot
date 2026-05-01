@@ -128,3 +128,82 @@ def test_team_cast_vote(db):
     assert result["restaurant_id"] == "p004"
     votes = repo.get_vote_results(team_id="t1", target_date=date.today())
     assert len(votes) >= 1
+
+
+# ── 캐시 동작 테스트 ──────────────────────────────────
+
+def test_weather_cache_hit_on_second_call(db):
+    """두 번째 호출은 캐시에서 반환 (DB 재조회 없음)."""
+    db.add(WeatherLog(
+        recorded_at=datetime.now(timezone.utc), condition="cloudy",
+        temperature=20.0, humidity=70, lat=37.4979, lng=127.0276
+    ))
+    db.commit()
+
+    repo = SQLiteWeatherRepo()
+    first  = repo.get_latest_cached()
+    second = repo.get_latest_cached()
+
+    assert first == second
+    assert second["condition"] == "cloudy"
+
+
+def test_weather_cache_invalidate(db):
+    """캐시 무효화 후 재조회 시 새 데이터를 반환."""
+    db.add(WeatherLog(
+        recorded_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        condition="sunny", temperature=25.0, humidity=50,
+        lat=37.4979, lng=127.0276
+    ))
+    db.commit()
+
+    repo = SQLiteWeatherRepo()
+    repo.get_latest_cached()  # 캐시 채우기
+
+    # DB에 더 최신 데이터 추가
+    db.add(WeatherLog(
+        recorded_at=datetime.now(timezone.utc),
+        condition="rainy", temperature=18.0, humidity=90,
+        lat=37.4979, lng=127.0276
+    ))
+    db.commit()
+
+    # 캐시 무효화 전: 여전히 sunny 반환
+    assert repo.get_latest_cached()["condition"] == "sunny"
+
+    # 캐시 무효화 후: rainy 반환
+    repo._cache.invalidate()
+    assert repo.get_latest_cached()["condition"] == "rainy"
+
+
+def test_restaurant_cache_hit_on_second_call(db):
+    """두 번째 get_nearby 호출은 캐시에서 반환."""
+    db.add(Restaurant(
+        place_id="p010", name="캐시테스트식당", category="한식",
+        lat=37.4979, lng=127.0276, rating=4.0
+    ))
+    db.commit()
+
+    repo = SQLiteRestaurantRepo()
+    first  = repo.get_nearby(lat=37.4979, lng=127.0276, radius=1000)
+    second = repo.get_nearby(lat=37.4979, lng=127.0276, radius=1000)
+
+    assert first == second
+    assert first[0]["name"] == "캐시테스트식당"
+
+
+def test_restaurant_cache_separate_by_category(db):
+    """category 파라미터가 다르면 별도 캐시 키로 관리."""
+    db.add(Restaurant(place_id="p011", name="한식당", category="한식",
+                      lat=37.4979, lng=127.0276, rating=4.0))
+    db.add(Restaurant(place_id="p012", name="일식당", category="일식",
+                      lat=37.4979, lng=127.0276, rating=4.0))
+    db.commit()
+
+    repo = SQLiteRestaurantRepo()
+    all_results    = repo.get_nearby(lat=37.4979, lng=127.0276, radius=1000)
+    korean_results = repo.get_nearby(lat=37.4979, lng=127.0276, radius=1000, category="한식")
+
+    assert len(all_results) == 2
+    assert len(korean_results) == 1
+    assert korean_results[0]["name"] == "한식당"
